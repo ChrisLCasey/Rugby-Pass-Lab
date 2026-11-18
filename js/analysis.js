@@ -14,11 +14,13 @@ const AXIS_IDX = { x: 0, y: 1, z: 2 };
 
 export const DEFAULTS = {
   ballAxis: 'y',        // which phone axis is the ball's long axis (y = along the phone)
+  source: 'auto',       // 'auto' = the phone's own gravity-free acceleration when it has one, 'ag' = raw accelerometer + orientation
   releaseHeight: 1.3,   // metres above ground at release
   onsetAccel: 3.0,      // m/s² that counts as the start of the movement
   quietAccel: 1.8,      // m/s² below which the phone counts as still
   quietRate: 60,        // deg/s below which the phone counts as still
   quietTime: 0.25,      // s of stillness that marks the end of the pass
+  quietLead: 0.15,      // s of stillness required before the pass starts
   clipAccel: 75,        // m/s² (~7.6 g): phones often saturate near here
   clipRate: 1900,       // deg/s: typical gyro range is ±2000
 };
@@ -66,7 +68,8 @@ export function regularizeTimes(samples) {
  * Returns +1, -1, or 1 when it can't tell.
  */
 export function estimateGravitySign(stillMotion, orient) {
-  const withAg = stillMotion.filter((s) => s.ag);
+  // keep only readings that are genuinely still (|a| close to 1 g, hardly rotating): people shuffle during the countdown
+  const withAg = stillMotion.filter((s) => s.ag && Math.abs(len(s.ag) - G) < 0.8 && len(s.w || [0, 0, 0]) < 30);
   if (withAg.length < 5 || !orient.length) return { sign: 1, confidence: 0 };
   const m = [0, 0, 0];
   for (const s of withAg) { m[0] += s.ag[0]; m[1] += s.ag[1]; m[2] += s.ag[2]; }
@@ -79,9 +82,9 @@ export function estimateGravitySign(stillMotion, orient) {
 }
 
 /** Linear (gravity-free) acceleration in the device frame for one sample. */
-export function linearDevice(s, q, gSign = 1) {
-  if (s.al) return mul(s.al, gSign);
-  if (!s.ag) return null;
+export function linearDevice(s, q, gSign = 1, source = 'auto') {
+  if (s.al && source !== 'ag') return mul(s.al, gSign);
+  if (!s.ag) return s.al ? mul(s.al, gSign) : null;
   const gravDev = qRot(qConj(q), [0, 0, G]);
   return sub(mul(s.ag, gSign), gravDev);
 }
@@ -125,49 +128,65 @@ export function analysePass(rec, options = {}) {
   const aw = new Array(n);
   const mag = new Float64Array(n);
   const wmag = new Float64Array(n);
+  // Phones report gravity-free acceleration two ways: the OS's own ("al") and raw accelerometer minus gravity
+  // using the orientation ("ag"). Use one for the measurement and the other as a cross-check.
+  const both = motion.filter((s) => s.al && s.ag).length > 0.9 * n;
+  const primary = o.source === 'ag' ? 'ag' : 'auto';
+  const altSource = primary === 'ag' ? 'al' : 'ag';
+  const awAlt = both ? new Array(n) : null;
   for (let i = 0; i < n; i++) {
     const q = orientAt(orient, t[i], hint);
     qs[i] = q;
-    const ad = linearDevice(motion[i], q, gSign);
+    const ad = linearDevice(motion[i], q, gSign, primary);
     aw[i] = qRot(q, ad);
     mag[i] = len(ad);
     wmag[i] = len(motion[i].w || [0, 0, 0]);
+    if (awAlt) awAlt[i] = qRot(q, linearDevice(motion[i], q, gSign, altSource));
   }
 
-  // --- onset: first sustained movement
-  let onset = -1;
-  for (let i = 0; i < n - 3; i++) {
-    if (mag[i] > o.onsetAccel && mag[i + 1] > o.onsetAccel && mag[i + 2] > o.onsetAccel) { onset = i; break; }
+  // --- find the pass: the movement that contains the strongest push.
+  // Anything before `notBefore` (the countdown, where people shuffle into their stance) cannot be the pass,
+  // and the movement is bounded by stillness on both sides, so a stance adjustment is never mistaken for it.
+  const first = rec.notBefore != null ? indexAtTime(t, rec.notBefore) : 0;
+  let peakIdx = -1, peakMag = 0;
+  for (let i = Math.max(first, 1); i < n - 1; i++) {
+    const m3 = (mag[i - 1] + mag[i] + mag[i + 1]) / 3;
+    if (m3 > peakMag) { peakMag = m3; peakIdx = i; }
   }
-  if (onset < 0) return fail('noMotion');
-  let peakMag = 0;
-  for (let i = onset; i < n; i++) peakMag = Math.max(peakMag, mag[i]);
-  if (peakMag < 6) return fail('tooGentle', { peakG: peakMag / G });
+  if (peakIdx < 0 || peakMag < o.onsetAccel) return fail('noMotion');
+  if (peakMag < 5) return fail('tooGentle', { peakG: peakMag / G });
 
-  const start = indexAtTime(t, t[onset] - 0.12);
+  const isStill = (i) => mag[i] < o.quietAccel && wmag[i] < o.quietRate;
 
-  // --- bias from the still lead-in
-  const leadFrom = indexAtTime(t, t[start] - 0.4);
-  let bias = [0, 0, 0];
-  const leadN = start - leadFrom;
-  const hasLead = leadN >= 5 && t[start] - t[leadFrom] >= 0.25;
-  if (hasLead) {
-    for (let i = leadFrom; i < start; i++) bias = add(bias, aw[i]);
-    bias = mul(bias, 1 / leadN);
+  // start: walk back from the peak to the last stretch of stillness
+  let start = Math.max(first, 0);
+  let hasQuietLead = false;
+  {
+    let runEnd = -1;
+    for (let i = peakIdx; i >= 0; i--) {
+      if (isStill(i)) {
+        if (runEnd < 0) runEnd = i;
+        if (t[runEnd] - t[i] >= o.quietLead) { start = runEnd; hasQuietLead = true; break; }
+      } else runEnd = -1;
+    }
   }
 
-  // --- end of the movement: first stretch of stillness after onset
+  // the still samples just before the movement give the sensor bias
+  const leadIdx = [];
+  if (hasQuietLead) {
+    for (let i = indexAtTime(t, t[start] - 0.5); i <= start; i++) if (isStill(i)) leadIdx.push(i);
+  }
+  const hasLead = leadIdx.length >= 5;
+
+  // end: walk forward from the peak to the first stretch of stillness
   let end = n - 1;
   let rested = false;
   {
     let runStart = -1;
-    for (let i = onset + 3; i < n; i++) {
-      const still = mag[i] < o.quietAccel && wmag[i] < o.quietRate;
-      if (still) {
+    for (let i = peakIdx; i < n; i++) {
+      if (isStill(i)) {
         if (runStart < 0) runStart = i;
-        if (t[i] - t[runStart] >= o.quietTime && t[runStart] - t[onset] > 0.15) {
-          end = runStart; rested = true; break;
-        }
+        if (t[i] - t[runStart] >= o.quietTime) { end = runStart; rested = true; break; }
       } else runStart = -1;
     }
   }
@@ -175,23 +194,30 @@ export function analysePass(rec, options = {}) {
 
   // --- integrate acceleration -> velocity (trapezoid), bias removed
   const m = end - start + 1;
-  const v = new Array(m);
-  v[0] = [0, 0, 0];
-  for (let k = 1; k < m; k++) {
-    const i = start + k;
-    const dt = t[i] - t[i - 1];
-    const a0 = sub(aw[i - 1], bias), a1 = sub(aw[i], bias);
-    v[k] = add(v[k - 1], mul(add(a0, a1), dt / 2));
-  }
-  // Rest-to-rest: the phone is still at both ends, so any leftover velocity is sensor drift.
-  if (rested) {
-    const tot = t[end] - t[start] || 1;
-    const vEnd = v[m - 1];
-    for (let k = 0; k < m; k++) {
-      const f = (t[start + k] - t[start]) / tot;
-      v[k] = sub(v[k], mul(vEnd, f));
+  const integrate = (acc) => {
+    let bias = [0, 0, 0];
+    if (hasLead) {
+      for (const i of leadIdx) bias = add(bias, acc[i]);
+      bias = mul(bias, 1 / leadIdx.length);
     }
-  }
+    const out = new Array(m);
+    out[0] = [0, 0, 0];
+    for (let k = 1; k < m; k++) {
+      const i = start + k;
+      const dt = t[i] - t[i - 1];
+      out[k] = add(out[k - 1], mul(add(sub(acc[i - 1], bias), sub(acc[i], bias)), dt / 2));
+    }
+    // Rest-to-rest: the phone is still at both ends, so any leftover velocity is sensor drift.
+    if (rested) {
+      const tot = t[end] - t[start] || 1;
+      const vEnd = out[m - 1];
+      for (let k = 0; k < m; k++) out[k] = sub(out[k], mul(vEnd, (t[start + k] - t[start]) / tot));
+    }
+    return out;
+  };
+  const v = integrate(aw);
+  let speedAlt = null;
+  if (awAlt) speedAlt = Math.max(...integrate(awAlt).map((x) => len(x)));
   const speed = v.map((x) => len(x));
   let rk = 0;
   for (let k = 1; k < m; k++) if (speed[k] > speed[rk]) rk = k;
@@ -272,10 +298,13 @@ export function analysePass(rec, options = {}) {
   if (rateHz < 30) warnings.push('lowRate');
   if (releaseSpeed > 38) warnings.push('implausibleSpeed');
   if (releaseSpeed < 2.5) warnings.push('veryGentle');
+  if (speedAlt != null && Math.abs(speedAlt - releaseSpeed) / Math.max(releaseSpeed, 1) > 0.2) warnings.push('channelsDisagree');
 
   return {
     ok: true,
     speed: releaseSpeed,                // m/s
+    speedAlt,                           // m/s from the other acceleration channel (null if the phone only has one)
+    source: primary === 'ag' ? 'ag' : (motion[0].al ? 'al' : 'ag'),
     elevation,                          // deg above horizontal
     direction,                          // deg, + = right of the stance direction
     spinRpm,
@@ -319,6 +348,7 @@ export const WARNING_TEXT = {
   lowRate: 'This browser delivered sensor readings slowly. Results are rougher than normal.',
   implausibleSpeed: 'That speed looks too high. Check the phone was held still before the pass.',
   veryGentle: 'Very gentle pass. Try a firmer movement for a more reliable reading.',
+  channelsDisagree: "The phone's two acceleration readings disagree by more than 20%, so the speed is uncertain. Try the other acceleration source in Settings and compare.",
 };
 
 export const FAIL_TEXT = {

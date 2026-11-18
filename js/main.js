@@ -24,7 +24,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
-const settings = { units: 'kmh', axis: 'y', height: 1.3, trigger: 12, ...store.get('passlab.settings', {}) };
+const settings = { units: 'kmh', axis: 'y', height: 1.3, trigger: 12, source: 'auto', ...store.get('passlab.settings', {}) };
 const UNITS = { kmh: { f: 3.6, l: 'km/h', d: 0 }, mph: { f: 2.23694, l: 'mph', d: 0 }, ms: { f: 1, l: 'm/s', d: 1 } };
 
 function bindSettings() {
@@ -33,11 +33,13 @@ function bindSettings() {
   $('setHeight').value = settings.height;
   $('outHeight').textContent = Number(settings.height).toFixed(1);
   $('setTrigger').value = String(settings.trigger);
+  $('setSource').value = settings.source;
   const save = () => store.set('passlab.settings', settings);
   $('setUnits').onchange = (e) => { settings.units = e.target.value; save(); if (current) renderResult(current, false); renderHistory(); };
   $('setAxis').onchange = (e) => { settings.axis = e.target.value; save(); recentre(); };
   $('setHeight').oninput = (e) => { settings.height = Number(e.target.value); $('outHeight').textContent = settings.height.toFixed(1); save(); };
   $('setTrigger').onchange = (e) => { settings.trigger = Number(e.target.value); save(); };
+  $('setSource').onchange = (e) => { settings.source = e.target.value; save(); };
   els.settingsBtn.onclick = () => els.dlg.showModal();
   els.dlg.addEventListener('close', () => { if (current && current.rec) reanalyse(); });
 }
@@ -235,12 +237,13 @@ function finishCapture() {
     motion: sensors.motion.filter((s) => s.t >= armedAt),
     orient,
     gSign: est.confidence > 0.6 ? est.sign : 1,
+    notBefore: goAt - 0.1,   // movement during the countdown (settling into the stance) can't be the pass
   };
   runAnalysis(rec);
 }
 
 function analysisOptions() {
-  return { ballAxis: settings.axis, releaseHeight: Number(settings.height) };
+  return { ballAxis: settings.axis, releaseHeight: Number(settings.height), source: settings.source };
 }
 
 function runAnalysis(rec, label = '') {

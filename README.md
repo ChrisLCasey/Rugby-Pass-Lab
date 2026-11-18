@@ -48,10 +48,13 @@ Treat results as good for comparing one pass with another, not as lab measuremen
 - Browsers deliver sensor data at roughly 60 readings a second. The analysis is tested at 100, 60 and 30 Hz.
 - iPhone and Android differ in accelerometer sign conventions. The app checks this during the still countdown and corrects for it.
 - A pass without a firm stop at the end cannot have its drift removed, so the speed is less certain. The app says so.
+- Only the movement that contains your strongest push is measured, bounded by stillness before and after. Settling into your stance during the countdown is ignored.
+- Distance grows roughly with the square of speed, so a 10% under-read in speed becomes about a 20% under-read in distance.
+- Phones report acceleration two ways. The app measures with the phone's own reading and cross-checks it against the raw accelerometer. If they disagree by more than 20% it warns you, and Settings lets you switch source and re-measure the same pass.
 
 ## Settings
 
-Speed units (km/h, mph, m/s), which phone axis is the ball's long axis, release height, and trigger sensitivity. Settings and the last 12 passes are kept in the browser's local storage on that phone only.
+Speed units (km/h, mph, m/s), which phone axis is the ball's long axis, release height, acceleration source, and trigger sensitivity. Settings and the last 12 passes are kept in the browser's local storage on that phone only.
 
 ## Files
 
@@ -70,6 +73,8 @@ tools/              converts a new USDZ ball into the two assets above
 tests/              unit tests
 vercel.json         security and cache headers
 ```
+
+If a result looks wrong, tap **Download data** on that pass to get the raw sensor readings as a CSV, which is enough to diagnose it.
 
 Run the unit tests with `npm test` (Node 20 or newer, nothing to install).
 

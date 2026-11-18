@@ -128,3 +128,52 @@ test('realistic phone sampling rates (60 Hz and 30 Hz) stay within a useful tole
     assert.ok(!r.warnings.includes('noLead'));
   }
 });
+
+test('ignores stance adjustments made during the countdown (regression: speed was under-read)', () => {
+  const rec = generateDemoPass({ speed: 14, elevation: 20, direction: 4, fidget: true, seed: 17 });
+  // 1) even if the whole recording is handed over, the pass itself must be the segment that is measured
+  const all = analysePass(rec);
+  assert.ok(all.ok, all.reason);
+  near(all.speed, 14, 1.0, 'speed with fidget in the recording');
+  near(all.elevation, 20, 2.5, 'elevation with fidget in the recording');
+  // 2) and when the app says where the pass window starts, the same result comes back
+  const windowed = analysePass({ ...rec, notBefore: rec.goAt });
+  assert.ok(windowed.ok, windowed.reason);
+  near(windowed.speed, 14, 1.0, 'speed with notBefore');
+  near(windowed.distance, all.distance, 0.8, 'distance agrees');
+});
+
+test('a pause during the wind-up does not hide the pass', () => {
+  // wind-up, 0.4 s pause at rest, then the pass: the pass segment must still be found
+  const rec = generateDemoPass({ speed: 13, elevation: 15, fidget: true, seed: 23 });
+  const r = analysePass(rec);
+  assert.ok(r.ok, r.reason);
+  near(r.speed, 13, 1.0, 'speed');
+});
+
+test('cross-checks the two acceleration channels and warns when they disagree', () => {
+  const good = analysePass(generateDemoPass({ speed: 13, elevation: 20, seed: 29 }));
+  assert.ok(good.ok);
+  assert.ok(!good.warnings.includes('channelsDisagree'));
+  near(good.speedAlt, good.speed, 0.8, 'both channels agree on a clean pass');
+
+  // an OS gravity filter that leaks sustained pushes makes the phone's own channel read low
+  const rec = generateDemoPass({ speed: 13, elevation: 20, alTau: 0.35, seed: 29 });
+  const viaAl = analysePass(rec);
+  assert.ok(viaAl.ok, viaAl.reason);
+  assert.ok(viaAl.speed < 11.5, `filtered channel should under-read, got ${viaAl.speed}`);
+  assert.ok(viaAl.warnings.includes('channelsDisagree'), 'should warn');
+  near(viaAl.speedAlt, 13, 1.0, 'the cross-check channel recovers the real speed');
+  // and choosing the raw accelerometer source fixes the headline number
+  const viaAg = analysePass(rec, { source: 'ag' });
+  near(viaAg.speed, 13, 1.0, 'raw accelerometer source');
+  assert.equal(viaAg.source, 'ag');
+});
+
+test('gravity-sign check ignores readings taken while the user is still moving', () => {
+  const rec = generateDemoPass({ fidget: true, deviceSign: -1, seed: 6 });
+  const window = rec.motion.filter((s) => s.t > 0.2 && s.t < 2.0);   // includes the stance shuffle at 0.3-0.9 s
+  const est = estimateGravitySign(window, rec.orient);
+  assert.equal(est.sign, -1);
+  assert.ok(est.confidence > 0.9);
+});

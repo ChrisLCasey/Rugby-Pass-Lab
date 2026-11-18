@@ -123,6 +123,15 @@
       </label>
 
       <label class="field">
+        <span>Acceleration source</span>
+        <select id="setSource">
+          <option value="auto">Phone's own reading (default)</option>
+          <option value="ag">Raw accelerometer with orientation</option>
+        </select>
+        <small>If speed or distance looks low, tap Done and compare the two on the same pass. The pass on screen is re-measured each time.</small>
+      </label>
+
+      <label class="field">
         <span>Trigger sensitivity</span>
         <select id="setTrigger">
           <option value="8">High: gentle passes</option>
