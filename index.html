@@ -122,6 +122,17 @@
         <small>Used for hang time and distance.</small>
       </label>
 
+      <div class="field">
+        <label for="setScale">Phone-to-ball factor, ×<output id="outScale">1.0</output></label>
+        <input id="setScale" type="range" min="0.5" max="6" step="0.1" value="1">
+        <small>A phone you are holding is swung slower than a ball you really throw, so a simulated pass reads short. This multiplies the measured speed to estimate a real pass. Leave at 1.0 for the phone's own speed.</small>
+        <div class="cal">
+          <input id="calDist" type="number" inputmode="decimal" min="1" max="60" step="0.5" placeholder="Real distance, m" aria-label="Real distance in metres">
+          <button id="btnCalibrate" class="btn quiet" type="button">Calibrate</button>
+        </div>
+        <small id="calMsg" role="status"></small>
+      </div>
+
       <label class="field">
         <span>Acceleration source</span>
         <select id="setSource">

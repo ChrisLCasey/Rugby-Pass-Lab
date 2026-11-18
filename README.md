@@ -49,6 +49,7 @@ Treat results as good for comparing one pass with another, not as lab measuremen
 - iPhone and Android differ in accelerometer sign conventions. The app checks this during the still countdown and corrects for it.
 - A pass without a firm stop at the end cannot have its drift removed, so the speed is less certain. The app says so.
 - Only the movement that contains your strongest push is measured, bounded by stillness before and after. Settling into your stance during the countdown is ignored.
+- A phone you are holding is swung slower than a ball you really throw. A real 10 m pass leaves the hand at about 12 m/s (43 km/h), but a careful simulated pass with a phone often reaches only 3 to 5 m/s, which reads as 2 to 3 m. The **phone-to-ball factor** in Settings multiplies the measured speed to estimate a real pass. Calibrate it once: make a typical simulated pass, open Settings, enter how far a real pass with that motion would go, and tap Calibrate. The result shows both the phone's own speed and the factor applied.
 - Distance grows roughly with the square of speed, so a 10% under-read in speed becomes about a 20% under-read in distance.
 - Phones report acceleration two ways. The app measures with the phone's own reading and cross-checks it against the raw accelerometer. If they disagree by more than 20% it warns you, and Settings lets you switch source and re-measure the same pass.
 

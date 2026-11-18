@@ -14,6 +14,7 @@ const AXIS_IDX = { x: 0, y: 1, z: 2 };
 
 export const DEFAULTS = {
   ballAxis: 'y',        // which phone axis is the ball's long axis (y = along the phone)
+  speedScale: 1,        // phone-to-ball factor: a phone held in the hand is swung slower than a ball is thrown
   source: 'auto',       // 'auto' = the phone's own gravity-free acceleration when it has one, 'ag' = raw accelerometer + orientation
   releaseHeight: 1.3,   // metres above ground at release
   onsetAccel: 3.0,      // m/s² that counts as the start of the movement
@@ -82,9 +83,9 @@ export function estimateGravitySign(stillMotion, orient) {
 }
 
 /** Linear (gravity-free) acceleration in the device frame for one sample. */
-export function linearDevice(s, q, gSign = 1, source = 'auto') {
-  if (s.al && source !== 'ag') return mul(s.al, gSign);
-  if (!s.ag) return s.al ? mul(s.al, gSign) : null;
+export function linearDevice(s, q, gSign = 1, source = 'auto', alSign = gSign) {
+  if (s.al && source !== 'ag') return mul(s.al, alSign);
+  if (!s.ag) return s.al ? mul(s.al, alSign) : null;
   const gravDev = qRot(qConj(q), [0, 0, G]);
   return sub(mul(s.ag, gSign), gravDev);
 }
@@ -131,17 +132,31 @@ export function analysePass(rec, options = {}) {
   // Phones report gravity-free acceleration two ways: the OS's own ("al") and raw accelerometer minus gravity
   // using the orientation ("ag"). Use one for the measurement and the other as a cross-check.
   const both = motion.filter((s) => s.al && s.ag).length > 0.9 * n;
+  // Some browsers flip the sign of the phone's own acceleration differently from the raw accelerometer, and a
+  // flipped sign turns an upward pass into a downward one. With both channels the right sign is whichever
+  // makes them agree.
+  let alSign = gSign;
+  if (both) {
+    let agree = 0;
+    const h2 = { i: 0 };
+    for (let i = 0; i < n; i++) {
+      const q = orientAt(orient, t[i], h2);
+      const viaAg = linearDevice(motion[i], q, gSign, 'ag');
+      agree += motion[i].al[0] * viaAg[0] + motion[i].al[1] * viaAg[1] + motion[i].al[2] * viaAg[2];
+    }
+    alSign = agree < 0 ? -1 : 1;
+  }
   const primary = o.source === 'ag' ? 'ag' : 'auto';
   const altSource = primary === 'ag' ? 'al' : 'ag';
   const awAlt = both ? new Array(n) : null;
   for (let i = 0; i < n; i++) {
     const q = orientAt(orient, t[i], hint);
     qs[i] = q;
-    const ad = linearDevice(motion[i], q, gSign, primary);
+    const ad = linearDevice(motion[i], q, gSign, primary, alSign);
     aw[i] = qRot(q, ad);
     mag[i] = len(ad);
     wmag[i] = len(motion[i].w || [0, 0, 0]);
-    if (awAlt) awAlt[i] = qRot(q, linearDevice(motion[i], q, gSign, altSource));
+    if (awAlt) awAlt[i] = qRot(q, linearDevice(motion[i], q, gSign, altSource, alSign));
   }
 
   // --- find the pass: the movement that contains the strongest push.
@@ -222,8 +237,11 @@ export function analysePass(rec, options = {}) {
   let rk = 0;
   for (let k = 1; k < m; k++) if (speed[k] > speed[rk]) rk = k;
   const rel = start + rk;                     // index of release in the full arrays
-  const vRel = v[rk];
-  const releaseSpeed = speed[rk];
+  const scale = o.speedScale > 0 ? o.speedScale : 1;
+  const vMeasured = v[rk];                    // what the phone itself did
+  const vRel = mul(vMeasured, scale);         // estimated ball release velocity
+  const releaseSpeed = speed[rk] * scale;
+  if (speedAlt != null) speedAlt *= scale;
 
   // positions (for the hand path during the throw)
   const pos = new Array(m);
@@ -303,6 +321,9 @@ export function analysePass(rec, options = {}) {
   return {
     ok: true,
     speed: releaseSpeed,                // m/s
+    speedMeasured: speed[rk],           // m/s the phone itself reached, before the phone-to-ball factor
+    speedScale: scale,
+    vMeasured,
     speedAlt,                           // m/s from the other acceleration channel (null if the phone only has one)
     source: primary === 'ag' ? 'ag' : (motion[0].al ? 'al' : 'ag'),
     elevation,                          // deg above horizontal
@@ -357,3 +378,22 @@ export const FAIL_TEXT = {
   noMotion: 'No pass movement detected. Try a firmer pass, or raise the sensitivity in Settings.',
   tooGentle: 'That pass was too gentle to measure. Pass with more force.',
 };
+
+/** Flight time and range for a release velocity [vx, vy, vz] (earth frame, z up) from height h, ignoring drag. */
+export function flightFor(v, h) {
+  const hs = Math.hypot(v[0], v[1]);
+  const T = (v[2] + Math.sqrt(v[2] * v[2] + 2 * G * h)) / G;
+  return { T, distance: hs * T };
+}
+
+/** Phone-to-ball factor that makes a measured phone velocity travel `target` metres. Null if it can't. */
+export function solveSpeedScale(vMeasured, h, target) {
+  if (!(target > 0) || Math.hypot(vMeasured[0], vMeasured[1]) < 0.05) return null;
+  let lo = 0.1, hi = 30;
+  if (flightFor(mul(vMeasured, hi), h).distance < target) return null;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (flightFor(mul(vMeasured, mid), h).distance < target) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}

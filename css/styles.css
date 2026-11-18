@@ -198,15 +198,20 @@ body.passmode .cancel:disabled { opacity: 0.28; cursor: default; }
 .foot { margin-top: 30px; font-size: 13.5px; color: var(--ink-soft); max-width: 58ch; }
 
 /* ---- settings dialog ---- */
-dialog { border: 0; border-radius: 16px; padding: 0; width: min(440px, calc(100vw - 24px)); color: var(--ink); background: var(--chalk); }
+dialog { border: 0; border-radius: 16px; padding: 0; width: min(440px, calc(100vw - 24px)); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-x: hidden; overflow-y: auto; color: var(--ink); background: var(--chalk); }
 dialog::backdrop { background: rgba(7,13,51,0.6); }
 .settings { padding: 22px 20px 20px; display: grid; gap: 18px; }
 .settings h2 { font: 700 30px/1 var(--display); color: var(--navy-800); }
 .field { display: grid; gap: 6px; font-weight: 500; }
 .field small { font-weight: 400; color: var(--ink-soft); font-size: 13.5px; line-height: 1.35; }
-.field select { min-height: 46px; padding: 0 10px; border-radius: 10px; border: 2px solid var(--line); background: #fff; }
+.field { min-width: 0; }
+.field select { width: 100%; min-width: 0; min-height: 46px; padding: 0 10px; border-radius: 10px; border: 2px solid var(--line); background: #fff; }
 .field input[type=range] { width: 100%; accent-color: var(--rose); height: 32px; }
 .dlg-actions { display: flex; justify-content: flex-end; }
+.cal { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 4px; }
+.cal input { min-height: 46px; padding: 0 10px; border-radius: 10px; border: 2px solid var(--line); background: #fff; min-width: 0; }
+.cal .btn { min-height: 46px; font-size: 17px; padding: 0 14px; }
+#calMsg:empty { display: none; }
 
 /* ---- wide screens: stage left, content right ---- */
 @media (min-width: 900px) {

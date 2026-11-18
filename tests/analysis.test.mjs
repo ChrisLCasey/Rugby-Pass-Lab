@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analysePass, estimateGravitySign, regularizeTimes, classifyPass } from '../js/analysis.js';
+import { analysePass, estimateGravitySign, regularizeTimes, classifyPass, flightFor, solveSpeedScale } from '../js/analysis.js';
 import { generateDemoPass } from '../js/demo.js';
 import { G } from '../js/math.js';
 
@@ -176,4 +176,42 @@ test('gravity-sign check ignores readings taken while the user is still moving',
   const est = estimateGravitySign(window, rec.orient);
   assert.equal(est.sign, -1);
   assert.ok(est.confidence > 0.9);
+});
+
+test('a flipped sign on the phone\'s own acceleration channel does not turn the pass downward', () => {
+  // raw accelerometer inverted (iOS style) but the phone's own channel not: the old code flipped both together
+  const rec = generateDemoPass({ speed: 12, elevation: 25, deviceSign: -1, alDeviceSign: 1, seed: 33 });
+  const still = rec.motion.filter((s) => s.t > 0.1 && s.t < 0.8);
+  const est = estimateGravitySign(still, rec.orient);
+  const r = analysePass({ ...rec, gSign: est.sign });
+  assert.ok(r.ok, r.reason);
+  near(r.elevation, 25, 2.5, 'elevation must stay upward');
+  near(r.speed, 12, 1.0, 'speed');
+  // and the opposite mismatch
+  const rec2 = generateDemoPass({ speed: 12, elevation: 25, deviceSign: 1, alDeviceSign: -1, seed: 34 });
+  const r2 = analysePass(rec2);
+  near(r2.elevation, 25, 2.5, 'elevation (opposite mismatch)');
+});
+
+test('phone-to-ball factor scales the release velocity and keeps the angle', () => {
+  const rec = generateDemoPass({ speed: 4.5, elevation: 10, direction: 3, seed: 5 });
+  const base = analysePass(rec);
+  const scaled = analysePass(rec, { speedScale: 2.7 });
+  near(scaled.speed, base.speed * 2.7, 0.01, 'speed');
+  near(scaled.speedMeasured, base.speed, 0.01, 'measured phone speed is kept');
+  near(scaled.elevation, base.elevation, 0.01, 'elevation unchanged');
+  near(scaled.direction, base.direction, 0.01, 'direction unchanged');
+  assert.ok(scaled.distance > base.distance * 3, 'distance grows faster than speed');
+});
+
+test('calibration finds the factor that gives a known distance', () => {
+  const rec = generateDemoPass({ speed: 4.5, elevation: 10, seed: 5 });
+  const r = analysePass(rec);
+  assert.ok(r.distance < 3.5, 'a gentle phone pass is short before calibration');
+  const k = solveSpeedScale(r.vMeasured, 1.3, 10);
+  assert.ok(k > 2 && k < 4, `factor ${k}`);
+  const after = analysePass(rec, { speedScale: k });
+  near(after.distance, 10, 0.05, 'distance after calibrating to 10 m');
+  assert.equal(solveSpeedScale([0, 0, 3], 1.3, 10), null, 'a straight-up throw cannot travel 10 m');
+  near(flightFor([10, 0, 0], 1.3).distance, 10 * Math.sqrt((2 * 1.3) / 9.80665), 1e-9, 'flat throw range');
 });

@@ -29,6 +29,7 @@ export function generateDemoPass(p = {}) {
     speed: 12, elevation: 28, direction: 6, spinRpm: 240,
     motionHz: 100, orientHz: 60, noise: 1, accelBias: 0, seed: 7,
     withAl: true, deviceSign: 1, stanceElevation: 10,
+    alDeviceSign: null,   // give the phone's own channel a different sign from the raw accelerometer
     alTau: 0,             // >0 simulates an OS gravity filter (seconds) that attenuates sustained pushes in `al`
     fidget: false,        // adjust the stance during the countdown before the pass, like a real user does
     ...p,
@@ -99,7 +100,7 @@ export function generateDemoPass(p = {}) {
     const w = [wn(), omega(t) + wn(), wn()];
     motion.push({
       t,
-      al: o.withAl ? alDev.map((x) => x * o.deviceSign) : null,
+      al: o.withAl ? alDev.map((x) => x * (o.alDeviceSign ?? o.deviceSign)) : null,
       ag: agDev.map((x) => x * o.deviceSign),
       w,
     });

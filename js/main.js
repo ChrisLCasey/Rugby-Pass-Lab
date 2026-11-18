@@ -1,7 +1,7 @@
 import { BallViewer } from './viewer.js';
 import { Sensors, linMagnitude, rateMagnitude } from './sensors.js';
 import {
-  analysePass, classifyPass, estimateGravitySign, forwardFromQuat, orientAt, WARNING_TEXT, FAIL_TEXT,
+  analysePass, classifyPass, estimateGravitySign, forwardFromQuat, orientAt, solveSpeedScale, WARNING_TEXT, FAIL_TEXT,
 } from './analysis.js';
 import { randomDemoPass } from './demo.js';
 import {
@@ -24,7 +24,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
-const settings = { units: 'kmh', axis: 'y', height: 1.3, trigger: 12, source: 'auto', ...store.get('passlab.settings', {}) };
+const settings = { units: 'kmh', axis: 'y', height: 1.3, trigger: 12, source: 'auto', scale: 1, ...store.get('passlab.settings', {}) };
 const UNITS = { kmh: { f: 3.6, l: 'km/h', d: 0 }, mph: { f: 2.23694, l: 'mph', d: 0 }, ms: { f: 1, l: 'm/s', d: 1 } };
 
 function bindSettings() {
@@ -34,12 +34,31 @@ function bindSettings() {
   $('outHeight').textContent = Number(settings.height).toFixed(1);
   $('setTrigger').value = String(settings.trigger);
   $('setSource').value = settings.source;
+  $('setScale').value = settings.scale;
+  $('outScale').textContent = Number(settings.scale).toFixed(1);
   const save = () => store.set('passlab.settings', settings);
   $('setUnits').onchange = (e) => { settings.units = e.target.value; save(); if (current) renderResult(current, false); renderHistory(); };
   $('setAxis').onchange = (e) => { settings.axis = e.target.value; save(); recentre(); };
   $('setHeight').oninput = (e) => { settings.height = Number(e.target.value); $('outHeight').textContent = settings.height.toFixed(1); save(); };
   $('setTrigger').onchange = (e) => { settings.trigger = Number(e.target.value); save(); };
   $('setSource').onchange = (e) => { settings.source = e.target.value; save(); };
+  $('setScale').oninput = (e) => {
+    settings.scale = Number(e.target.value); $('outScale').textContent = settings.scale.toFixed(1); save();
+    $('calMsg').textContent = '';
+  };
+  $('calDist').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('btnCalibrate').click(); } });
+  $('btnCalibrate').onclick = () => {
+    const msg = $('calMsg');
+    const target = Number($('calDist').value);
+    if (!current || !current.result.vMeasured) { msg.textContent = 'Do a pass first (or a demo pass), then calibrate from it.'; return; }
+    if (!(target > 0)) { msg.textContent = 'Enter how far a real pass with that motion would go, in metres.'; return; }
+    const k = solveSpeedScale(current.result.vMeasured, Number(settings.height), target);
+    if (!k) { msg.textContent = 'That pass was too upward or too weak to reach that distance. Try a flatter pass.'; return; }
+    settings.scale = Math.min(6, Math.max(0.5, Math.round(k * 10) / 10));
+    $('setScale').value = settings.scale; $('outScale').textContent = settings.scale.toFixed(1); save();
+    reanalyse();
+    msg.textContent = `Factor set to ×${settings.scale.toFixed(1)}. The pass on screen now reads about ${target} m.`;
+  };
   els.settingsBtn.onclick = () => els.dlg.showModal();
   els.dlg.addEventListener('close', () => { if (current && current.rec) reanalyse(); });
 }
@@ -243,7 +262,7 @@ function finishCapture() {
 }
 
 function analysisOptions() {
-  return { ballAxis: settings.axis, releaseHeight: Number(settings.height), source: settings.source };
+  return { ballAxis: settings.axis, releaseHeight: Number(settings.height), source: settings.source, speedScale: Number(settings.scale) };
 }
 
 function runAnalysis(rec, label = '') {
@@ -289,9 +308,10 @@ function renderResult(entry, animate) {
   const u = UNITS[settings.units];
   els.results.hidden = false;
   $('rType').textContent = classifyPass(r);
-  $('rSub').textContent = r.demo
-    ? 'Demo pass from simulated sensor data.'
-    : new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const when = r.demo ? 'Demo pass from simulated sensor data.' : new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const k = r.speedScale || 1;
+  $('rSub').textContent = k === 1 ? when
+    : `${when} The phone moved at ${fmt(r.speedMeasured * UNITS[settings.units].f, UNITS[settings.units].d)} ${UNITS[settings.units].l}; a phone-to-ball factor of ×${k.toFixed(1)} is applied.`;
   $('rSpeedU').textContent = u.l;
   const dirAbs = Math.abs(r.direction);
   $('rDirLab').textContent = dirAbs < 1.5 ? 'Direction, straight on' : `Direction, degrees ${r.direction > 0 ? 'right' : 'left'}`;
