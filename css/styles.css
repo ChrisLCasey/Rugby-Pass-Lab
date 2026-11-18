@@ -86,6 +86,38 @@ button, select, input { font: inherit; color: inherit; }
   padding: 8px 14px; font-weight: 600; cursor: pointer;
 }
 
+/* ---- pass mode: only the ball, the countdown and Cancel ---- */
+.cancel { display: none; }
+body.passmode { overflow: hidden; touch-action: none; }
+body.passmode .bar,
+body.passmode .panel,
+body.passmode .skip { display: none; }
+body.passmode .layout { display: block; }
+body.passmode .stage {
+  position: fixed; inset: 0; z-index: 30; height: 100vh; height: 100dvh; width: 100%;
+}
+body.passmode .hud {
+  top: calc(env(safe-area-inset-top) + 22px); bottom: auto; text-align: center;
+  left: var(--gutter); right: var(--gutter);
+}
+body.passmode .hud-main { font-size: clamp(64px, 21vw, 132px); }
+body.passmode .hud-sub { margin-inline: auto; max-width: 28ch; font-size: 18px; }
+body.passmode .hud.go::before {
+  top: -40px; bottom: -30px;
+  background: linear-gradient(to bottom, rgba(200,16,46,0.9), rgba(200,16,46,0));
+}
+body.passmode .cancel {
+  display: block; position: absolute; z-index: 3;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  min-width: 200px; min-height: 60px; padding: 0 30px; border-radius: 14px;
+  background: rgba(255,255,255,0.14); color: var(--chalk);
+  border: 2px solid rgba(255,255,255,0.55); cursor: pointer;
+  font: 700 24px/1 var(--display); letter-spacing: 0.02em;
+}
+body.passmode .cancel:hover { background: rgba(255,255,255,0.24); }
+body.passmode .cancel:disabled { opacity: 0.28; cursor: default; }
+
 /* ---- panel ---- */
 .panel { padding: 18px var(--gutter) calc(32px + env(safe-area-inset-bottom)); max-width: 720px; margin: 0 auto; }
 .actions { display: grid; grid-template-columns: 1fr auto; gap: 10px; }

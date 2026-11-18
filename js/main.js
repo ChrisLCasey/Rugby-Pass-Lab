@@ -11,7 +11,7 @@ import {
 const $ = (id) => document.getElementById(id);
 const els = {
   stage: $('stage'), gl: $('gl'), fx: $('fx'), hud: document.querySelector('.hud'),
-  hudMain: $('hudMain'), hudSub: $('hudSub'), centre: $('btnCentre'),
+  hudMain: $('hudMain'), hudSub: $('hudSub'), centre: $('btnCentre'), cancel: $('btnCancel'),
   start: $('start'), demo: $('btnDemo'), notice: $('notice'),
   results: $('results'), flight: $('flight'), flightCap: $('flightCap'), warnings: $('warnings'),
   replay: $('btnReplay'), csv: $('btnCsv'),
@@ -92,6 +92,7 @@ function hud(main, sub = '', go = false) {
 }
 function notice(text, kind = 'error') {
   if (!text) { els.notice.hidden = true; return; }
+  hud(kind === 'info' ? 'Heads up' : 'Try again', text);
   els.notice.textContent = text;
   els.notice.className = 'notice' + (kind === 'info' ? ' info' : '');
   els.notice.hidden = false;
@@ -123,11 +124,30 @@ let replay = null;
 
 const now = () => performance.now() / 1000;
 
+let wakeLock = null;
+async function holdAwake(on) {
+  try {
+    if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+    else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch { /* wake lock unavailable or refused */ }
+}
+
+/** Full-screen pass mode: just the ball, the countdown and a Cancel button. */
+function setPassMode(on) {
+  if (document.body.classList.contains('passmode') === on) return;
+  document.body.classList.toggle('passmode', on);
+  if (on) window.scrollTo(0, 0);
+  holdAwake(on);
+}
+
 function setButton() {
   const busy = state !== 'idle';
   els.start.textContent = busy ? 'Cancel' : 'Start pass';
   els.start.classList.toggle('live', busy);
   els.demo.disabled = busy;
+  setPassMode(busy);
+  // once the pass is under way the phone is moving, so a stray thumb must not cancel it
+  els.cancel.disabled = state === 'capturing';
 }
 
 async function onStart() {
@@ -192,6 +212,7 @@ sensors.onMotion = (s) => {
       trig.count++;
       if (trig.count >= 2) {
         state = 'capturing'; trig.triggeredAt = s.t; trig.quietSince = 0;
+        els.cancel.disabled = true;
         hud('Measuring', 'Follow through and finish still.');
       }
     } else trig.count = 0;
@@ -508,7 +529,7 @@ function frame(ts) {
     }
   }
   if (!frameState) {
-    const dist = viewer.fitDistance(0.78);
+    const dist = viewer.fitDistance(state === 'idle' ? 0.78 : 0.94);
     if (sensors.isLive()) {
       if (!liveCentred) recentre();
       const S = earthToScene(liveFwd);
@@ -533,6 +554,8 @@ async function init() {
   setButton();
   els.start.onclick = onStart;
   els.centre.onclick = recentre;
+  els.cancel.onclick = () => { if (state !== 'idle' && state !== 'capturing') cancel(); };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (state === 'countdown' || state === 'ready')) cancel(); });
   els.demo.onclick = () => {
     if (state !== 'idle') return;
     notice('');
