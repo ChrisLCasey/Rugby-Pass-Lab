@@ -1,0 +1,1 @@
+{"name":"rugby-pass-lab","private":true,"type":"module","version":"1.0.0","scripts":{"test":"node --test tests/analysis.test.mjs","dev":"npx --yes serve ."}}
